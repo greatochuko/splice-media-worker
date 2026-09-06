@@ -52,6 +52,176 @@ const SocialMediaAssetsSchema = z.object({
 });
 
 export class AiService {
+  private async extractAudio(localVideoPath: string): Promise<string> {
+    const audioPath = path.join(
+      os.tmpdir(),
+      `audio-${Date.now()}-${Math.random().toString(36).substring(7)}.mp3`,
+    );
+
+    return new Promise((resolve, reject) => {
+      ffmpeg(localVideoPath)
+        .noVideo()
+        .audioCodec("libmp3lame")
+        .audioBitrate("64k")
+        .audioChannels(1)
+        .output(audioPath)
+        .on("end", () => resolve(audioPath))
+        .on("error", reject)
+        .run();
+    });
+  }
+
+  private async getAudioDuration(audioPath: string): Promise<number> {
+    return new Promise((resolve, reject) => {
+      ffmpeg.ffprobe(audioPath, (err, metadata) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+
+        const duration = metadata.format.duration;
+
+        if (!duration) {
+          reject(new Error("Could not determine audio duration"));
+          return;
+        }
+
+        resolve(duration);
+      });
+    });
+  }
+
+  private async splitAudio(
+    audioPath: string,
+    duration: number,
+  ): Promise<string[]> {
+    const CHUNK_DURATION = 10 * 60; // 10 minutes
+
+    const chunks: string[] = [];
+
+    for (let startTime = 0; startTime < duration; startTime += CHUNK_DURATION) {
+      const chunkPath = path.join(
+        os.tmpdir(),
+        `audio-chunk-${Date.now()}-${Math.random()
+          .toString(36)
+          .substring(7)}.mp3`,
+      );
+
+      const chunkDuration = Math.min(CHUNK_DURATION, duration - startTime);
+
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(audioPath)
+          .setStartTime(startTime)
+          .setDuration(chunkDuration)
+          .audioCodec("libmp3lame")
+          .audioBitrate("64k")
+          .audioChannels(1)
+          .output(chunkPath)
+          .on("end", () => resolve())
+          .on("error", reject)
+          .run();
+      });
+
+      chunks.push(chunkPath);
+    }
+
+    return chunks;
+  }
+
+  private async transcribeAudioFile(
+    audioPath: string,
+    offsetSeconds = 0,
+  ): Promise<{
+    text: string;
+    segments: Array<{
+      start: number;
+      end: number;
+      text: string;
+    }>;
+  }> {
+    const audioBuffer = await fs.promises.readFile(audioPath);
+
+    const file = await toFile(audioBuffer, path.basename(audioPath));
+
+    const response = await openai.audio.transcriptions.create({
+      file,
+      model: "whisper-1",
+      response_format: "verbose_json",
+      timestamp_granularities: ["segment"],
+    });
+
+    return {
+      text: response.text,
+      segments: (response.segments || []).map((segment) => ({
+        start: segment.start + offsetSeconds,
+        end: segment.end + offsetSeconds,
+        text: segment.text,
+      })),
+    };
+  }
+
+  private async transcribeMedia(localPath: string): Promise<TranscribedMedia> {
+    if (!fs.existsSync(localPath)) {
+      throw new Error(`File not found at path: ${localPath}`);
+    }
+
+    const audioPath = await this.extractAudio(localPath);
+
+    let chunkPaths: string[] = [];
+
+    try {
+      const duration = await this.getAudioDuration(audioPath);
+
+      logger.info(
+        `Audio extracted successfully. Duration: ${Math.round(duration)}s`,
+      );
+
+      /*
+       * At 64kbps mono, 10 minutes is only around 4.8MB.
+       * This keeps every Whisper upload comfortably below 25MB.
+       */
+      chunkPaths = await this.splitAudio(audioPath, duration);
+
+      const allSegments: Array<{
+        start: number;
+        end: number;
+        text: string;
+      }> = [];
+
+      const allText: string[] = [];
+
+      for (let i = 0; i < chunkPaths.length; i++) {
+        const chunkPath = chunkPaths[i];
+
+        if (!chunkPath) continue;
+
+        const offset = i * 10 * 60;
+
+        logger.info(
+          `[Transcription ${i + 1}/${chunkPaths.length}] Transcribing audio chunk...`,
+        );
+
+        const result = await this.transcribeAudioFile(chunkPath, offset);
+
+        allText.push(result.text);
+        allSegments.push(...result.segments);
+
+        await fs.promises.unlink(chunkPath).catch(() => {});
+      }
+
+      return {
+        fullText: allText.join(" "),
+        segments: allSegments,
+      };
+    } finally {
+      await fs.promises.unlink(audioPath).catch(() => {});
+
+      for (const chunkPath of chunkPaths) {
+        await fs.promises.unlink(chunkPath).catch(() => {});
+      }
+    }
+  }
+
   /**
    * Helper: Convert time in seconds to ASS subtitle timestamp format (H:MM:SS.cs)
    */
@@ -117,34 +287,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     await fs.promises.writeFile(assPath, content, "utf-8");
 
     return assPath;
-  }
-
-  private async transcribeMedia(localPath: string): Promise<TranscribedMedia> {
-    if (!fs.existsSync(localPath)) {
-      throw new Error(`File not found at path: ${localPath}`);
-    }
-
-    const fileBuffer = await fs.promises.readFile(localPath);
-    const filename = path.basename(localPath);
-    const file = await toFile(fileBuffer, filename);
-
-    const response = await openai.audio.transcriptions.create({
-      file,
-      model: "whisper-1",
-      response_format: "verbose_json",
-      timestamp_granularities: ["segment"],
-    });
-
-    const segments = (response.segments || []).map((seg) => ({
-      start: seg.start,
-      end: seg.end,
-      text: seg.text,
-    }));
-
-    return {
-      fullText: response.text,
-      segments,
-    };
   }
 
   private async extractAndFormatAssets(
@@ -319,7 +461,7 @@ ${JSON.stringify(transcript.segments, null, 2)}
         isTempSource = true;
       }
 
-      // 2. Transcribe audio with local Whisper
+      // 2. Extract audio and transcribe with OpenAI Whisper
       logger.info(`[Step 2/3] Transcribing media with Whisper...`);
       const transcriptData = await this.transcribeMedia(localSourcePath);
 
