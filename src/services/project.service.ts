@@ -1,9 +1,9 @@
 import { Platform } from "../generated/prisma/enums";
-import { AssetCreateManyInput } from "../generated/prisma/models";
 import { prisma } from "../lib/prisma";
 import { logger } from "../utils/logger";
 import { aiService } from "./ai.service";
 import { storageService } from "./storage.service";
+import { queueService } from "./queue.service";
 
 export interface Job<T = unknown> {
   id?: string;
@@ -11,7 +11,6 @@ export interface Job<T = unknown> {
 }
 
 export class ProjectService {
-  // Executed asynchronously in worker process / queue runner
   async processProjectMediaJob(
     job: Job<{
       projectId: string;
@@ -29,55 +28,56 @@ export class ProjectService {
         throw new Error("No source media found to process");
       }
 
-      // Step A: Update status to PROCESSING
       await prisma.project.update({
         where: { id: projectId },
         data: { status: "PROCESSING" },
       });
 
-      // Step B: Ensure the master source media is persisted in Cloudinary once
-      // (If it came in as a raw external URL, persist it before running clip generation)
       if (sourceUrl && !sourceFile && !sourceUrl.includes("cloudinary.com")) {
         masterMediaUrl = await storageService.uploadFile(sourceUrl);
-
         await prisma.project.update({
           where: { id: projectId },
           data: { sourceFile: masterMediaUrl },
         });
       }
 
-      // Step C: Generate clips via AI & FFmpeg (Uploads ONLY newly rendered vertical clips)
-      const generatedAssets = await aiService.generateClips(
-        masterMediaUrl,
-        targetPlatforms,
-      );
+      // 1. Extract metadata and transcript with word timestamps
+      const { transcript, assets: generatedAssets } =
+        await aiService.generateClipMetadata(masterMediaUrl, targetPlatforms);
 
-      // Step D: Save created assets & set Project status to READY
-      await prisma.$transaction([
-        prisma.asset.createMany({
-          data: generatedAssets.map(
-            (clip): AssetCreateManyInput => ({
+      // 2. Create Asset records with 'processing' status
+      const createdAssets = await prisma.$transaction(
+        generatedAssets.map((clip) =>
+          prisma.asset.create({
+            data: {
               projectId,
               title: clip.title,
               platform: clip.platform,
               draftText: clip.draftText,
-              startTime: clip.startTime ?? null,
-              endTime: clip.endTime ?? null,
-              mediaUrl: clip.mediaUrl,
-              thumbnailUrl: clip.thumbnailUrl,
-              mediaType: clip.mediaType,
-              status: "draft",
-            }),
-          ),
-        }),
-        prisma.project.update({
-          where: { id: projectId },
-          data: {
-            sourceFile: masterMediaUrl,
-            status: "READY",
-          },
-        }),
-      ]);
+              startTime: clip.startTime,
+              endTime: clip.endTime,
+              mediaUrl: "",
+              thumbnailUrl: "",
+              mediaType: "video/mp4",
+              status: "processing",
+            },
+          }),
+        ),
+      );
+
+      // 3. Queue individual render jobs
+      for (const asset of createdAssets) {
+        if (asset.startTime === null || asset.endTime === null) continue;
+
+        await queueService.addRenderJob({
+          projectId,
+          assetId: asset.id,
+          sourceUrl: masterMediaUrl,
+          startTime: asset.startTime,
+          endTime: asset.endTime,
+          words: transcript.words,
+        });
+      }
     } catch (error) {
       const errorMessage =
         (error as Error).message || "Unknown processing error occurred";
