@@ -46,24 +46,21 @@ export class ProjectService {
         await aiService.generateClipMetadata(masterMediaUrl, targetPlatforms);
 
       // 2. Create Asset records with 'processing' status
-      const createdAssets = await prisma.$transaction(
-        generatedAssets.map((clip) =>
-          prisma.asset.create({
-            data: {
-              projectId,
-              title: clip.title,
-              platform: clip.platform,
-              draftText: clip.draftText,
-              startTime: clip.startTime,
-              endTime: clip.endTime,
-              mediaUrl: "",
-              thumbnailUrl: "",
-              mediaType: "video/mp4",
-              status: "processing",
-            },
-          }),
-        ),
-      );
+      // Single bulk INSERT query returning created records with generated IDs
+      const createdAssets = await prisma.asset.createManyAndReturn({
+        data: generatedAssets.map((clip) => ({
+          projectId,
+          title: clip.title,
+          platform: clip.platform,
+          draftText: clip.draftText,
+          startTime: clip.startTime,
+          endTime: clip.endTime,
+          mediaUrl: "",
+          thumbnailUrl: "",
+          mediaType: "video/mp4",
+          status: "processing",
+        })),
+      });
 
       // 3. Queue individual render jobs
       for (const asset of createdAssets) {
