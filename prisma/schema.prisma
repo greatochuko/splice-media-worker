@@ -17,6 +17,18 @@ enum Role {
   VIEWER
 }
 
+enum ContentType {
+  podcast
+  interview
+  youtube
+  webinar
+  course
+  tutorial
+  livestream
+  presentation
+  other
+}
+
 enum InvoiceStatus {
   PAID
   PENDING
@@ -396,6 +408,7 @@ model Project {
   platforms    Platform[]
   sourceUrl    String?
   sourceFile   String?
+  contentType  ContentType   @default(other)
   errorMessage String? // Useful for client feedback if a job fails
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt

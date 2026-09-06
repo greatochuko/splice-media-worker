@@ -243,13 +243,14 @@ export class AiService {
     duration: number,
   ): RawClipAsset[] {
     const validAssets: RawClipAsset[] = [];
+    const MAX_CLIP_DURATION = 90; // Increased duration ceiling to allow complete ideas (up to 90s)
 
     for (const asset of assets) {
       if (asset.startTime === null || asset.endTime === null) continue;
       if (asset.startTime < 0) continue;
       if (asset.endTime <= asset.startTime) continue;
       if (asset.endTime > duration) continue;
-      if (asset.endTime - asset.startTime > 35) continue;
+      if (asset.endTime - asset.startTime > MAX_CLIP_DURATION) continue;
 
       validAssets.push({
         title: asset.title,
@@ -277,12 +278,11 @@ Analyze the transcript below and identify the strongest moments that can be turn
     )}.
 
 ### Instructions:
-1. Identify the most captivating, insightful, or emotional moments.
-2. Every clip MUST be 35 seconds or less.
-3. Prefer self-contained clips that make sense without additional context.
+1. Identify the most captivating, complete, and high-value moments.
+2. Ensure each clip represents a COMPLETE thought, argument, or story point. Clips should generally be between 30 and 75 seconds long.
+3. Every clip MUST NOT exceed 90 seconds in duration.
 4. Provide explicit \`startTime\` and \`endTime\` timestamps in seconds for every video clip.
-5. The difference between \`endTime\` and \`startTime\` MUST NEVER exceed 35 seconds.
-6. Do not start or end mid-sentence unless necessary.
+5. Do not start or end mid-sentence. Include full setups, hooks, and conclusions.
 
 ### Transcript Data:
 ${JSON.stringify(transcript.segments, null, 2)}
@@ -294,7 +294,7 @@ ${JSON.stringify(transcript.segments, null, 2)}
         {
           role: "system",
           content:
-            "You are an expert short-form video editor. Extract the strongest moments from transcripts and return precise timestamps.",
+            "You are an expert short-form video editor. Extract complete, impactful moments from transcripts and return precise timestamps.",
         },
         { role: "user", content: prompt },
       ],

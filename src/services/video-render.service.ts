@@ -68,7 +68,11 @@ export class VideoRenderService {
       `clip-render-${Date.now()}-${Math.random().toString(36).substring(7)}.mp4`,
     );
 
-    const filters: string[] = ["crop=ih*(9/16):ih", "scale=1080:1920"];
+    // High quality crop to 9:16 vertical and high-res Lanczos scaling
+    const filters: string[] = [
+      "crop=ih*(9/16):ih",
+      "scale=1080:1920:flags=lanczos",
+    ];
 
     if (subtitlesPath) {
       const escapedSubPath = path
@@ -80,15 +84,18 @@ export class VideoRenderService {
 
     return new Promise((resolve, reject) => {
       ffmpeg(inputPath)
-        .setStartTime(startTime)
+        .inputOptions([`-ss ${startTime}`]) // Fast seek prior to input
         .setDuration(duration)
         .videoFilters(filters)
         .outputOptions([
           "-c:v libx264",
-          "-crf 23",
-          "-preset fast",
+          "-crf 18", // Near-lossless visual quality (CRF 18 is industry standard high quality)
+          "-preset medium", // Better encoding compression efficiency
+          "-profile:v high",
+          "-level 4.2",
+          "-pix_fmt yuv420p", // Ensures universal device compatibility
           "-c:a aac",
-          "-b:a 128k",
+          "-b:a 192k", // Increased audio bitrate
         ])
         .output(outputPath)
         .on("end", () => resolve(outputPath))
