@@ -1,7 +1,6 @@
 import { Queue } from "bullmq";
 import { logger } from "../utils/logger";
 import { redisClient } from "../lib/redis";
-import { Platform } from "../generated/prisma/enums";
 import { TranscribedWord } from "./ai.service";
 
 redisClient.on("error", (err) => {
@@ -12,7 +11,6 @@ export interface MediaJobPayload {
   projectId: string;
   sourceUrl?: string;
   sourceFile?: string;
-  targetPlatforms: Platform[];
 }
 
 export interface RenderJobPayload {

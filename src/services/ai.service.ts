@@ -1,4 +1,3 @@
-import { Platform } from "../generated/prisma/enums";
 import { logger } from "../utils/logger";
 import fs from "fs";
 import path from "path";
@@ -44,7 +43,6 @@ export type TranscribedMedia = {
 
 export interface RawClipAsset {
   title: string;
-  platform: Platform;
   draftText: string;
   startTime: number;
   endTime: number;
@@ -52,7 +50,6 @@ export interface RawClipAsset {
 
 const AssetSchema = z.object({
   title: z.string(),
-  platform: z.enum(Platform),
   draftText: z.string(),
   startTime: z
     .number()
@@ -235,7 +232,6 @@ export class AiService {
   private validateClipTimestamps(
     assets: Array<{
       title: string;
-      platform: Platform;
       draftText: string;
       startTime: number | null;
       endTime: number | null;
@@ -254,7 +250,6 @@ export class AiService {
 
       validAssets.push({
         title: asset.title,
-        platform: asset.platform,
         draftText: asset.draftText,
         // Apply +/- 0.2s padding for boundary clipping
         startTime: Math.max(0, asset.startTime - 0.2),
@@ -267,15 +262,12 @@ export class AiService {
 
   private async extractAndFormatAssets(
     transcript: TranscribedMedia,
-    platforms: Platform[],
     duration: number,
   ): Promise<RawClipAsset[]> {
     const prompt = `
 You are an expert short-form video content strategist.
 
-Analyze the transcript below and identify the strongest moments that can be turned into engaging short-form video clips for: ${platforms.join(
-      ", ",
-    )}.
+Analyze the transcript below and identify the strongest moments that can be turned into engaging short-form video clips.
 
 ### Instructions:
 1. Identify the most captivating, complete, and high-value moments.
@@ -283,6 +275,7 @@ Analyze the transcript below and identify the strongest moments that can be turn
 3. Every clip MUST NOT exceed 90 seconds in duration.
 4. Provide explicit \`startTime\` and \`endTime\` timestamps in seconds for every video clip.
 5. Do not start or end mid-sentence. Include full setups, hooks, and conclusions.
+6. Write a natural, platform-agnostic caption/description for each clip in \`draftText\` — the person will tailor it further per platform afterward.
 
 ### Transcript Data:
 ${JSON.stringify(transcript.segments, null, 2)}
@@ -456,7 +449,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
   public async generateClipMetadata(
     filePathOrUrl: string,
-    platforms: Platform[],
   ): Promise<{ transcript: TranscribedMedia; assets: RawClipAsset[] }> {
     let localSourcePath = filePathOrUrl;
     let isTempSource = false;
@@ -476,7 +468,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
       const transcriptData = await this.transcribeMedia(localSourcePath);
       const rawAssets = await this.extractAndFormatAssets(
         transcriptData,
-        platforms,
         duration,
       );
 

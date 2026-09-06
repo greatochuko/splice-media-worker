@@ -3,7 +3,8 @@ import { prisma } from "../lib/prisma";
 import { logger } from "../utils/logger";
 import { aiService } from "./ai.service";
 import { storageService } from "./storage.service";
-import { queueService } from "./queue.service";
+import { MediaJobPayload, queueService } from "./queue.service";
+import { AssetCreateManyInput } from "../generated/prisma/models";
 
 export interface Job<T = unknown> {
   id?: string;
@@ -11,15 +12,8 @@ export interface Job<T = unknown> {
 }
 
 export class ProjectService {
-  async processProjectMediaJob(
-    job: Job<{
-      projectId: string;
-      sourceUrl?: string;
-      sourceFile?: string;
-      targetPlatforms: Platform[];
-    }>,
-  ) {
-    const { projectId, sourceUrl, sourceFile, targetPlatforms } = job.data;
+  async processProjectMediaJob(job: Job<MediaJobPayload>) {
+    const { projectId, sourceUrl, sourceFile } = job.data;
 
     try {
       let masterMediaUrl = sourceFile || sourceUrl;
@@ -43,23 +37,24 @@ export class ProjectService {
 
       // 1. Extract metadata and transcript with word timestamps
       const { transcript, assets: generatedAssets } =
-        await aiService.generateClipMetadata(masterMediaUrl, targetPlatforms);
+        await aiService.generateClipMetadata(masterMediaUrl);
 
       // 2. Create Asset records with 'processing' status
       // Single bulk INSERT query returning created records with generated IDs
       const createdAssets = await prisma.asset.createManyAndReturn({
-        data: generatedAssets.map((clip) => ({
-          projectId,
-          title: clip.title,
-          platform: clip.platform,
-          draftText: clip.draftText,
-          startTime: clip.startTime,
-          endTime: clip.endTime,
-          mediaUrl: "",
-          thumbnailUrl: "",
-          mediaType: "video/mp4",
-          status: "processing",
-        })),
+        data: generatedAssets.map(
+          (clip): AssetCreateManyInput => ({
+            projectId,
+            title: clip.title,
+            draftText: clip.draftText,
+            startTime: clip.startTime,
+            endTime: clip.endTime,
+            mediaUrl: "",
+            thumbnailUrl: "",
+            mediaType: "video/mp4",
+            status: "processing",
+          }),
+        ),
       });
 
       // 3. Queue individual render jobs

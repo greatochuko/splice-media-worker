@@ -63,9 +63,7 @@ enum Platform {
   facebook
   linkedin
   x
-  newsletter
   threads
-  podcasts
 }
 
 enum WorkflowType {
@@ -84,6 +82,12 @@ enum AssetStatus {
   processing
   ready
   failed
+}
+
+enum PostingStatus {
+  draft
+  scheduled
+  published
 }
 
 enum AssetType {
@@ -404,12 +408,11 @@ model Project {
   workspaceId  String
   name         String
   description  String?
-  status       ProjectStatus @default(PENDING) // Default to PENDING
-  platforms    Platform[]
+  status       ProjectStatus @default(PENDING)
   sourceUrl    String?
   sourceFile   String?
   contentType  ContentType   @default(other)
-  errorMessage String? // Useful for client feedback if a job fails
+  errorMessage String?
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
 
@@ -425,54 +428,47 @@ model Asset {
   projectId String
   title     String
   type      AssetType   @default(clip)
-  platform  Platform
-  status    AssetStatus @default(draft)
-  draftText String      @default("")
+  status    AssetStatus @default(draft) // render/processing state of the clip's media
+  draftText String      @default("") // master caption, shared unless a posting overrides it
 
-  // Media payload for publishing
-  mediaUrl     String // Cloudinary or S3 URL of the cut clip/image
-  thumbnailUrl String // Cover photo or video frame
-  mediaType    String // e.g. "video/mp4", "image/png"
+  mediaUrl     String
+  thumbnailUrl String
+  mediaType    String
 
-  // Clip cut timestamps (for video rendering steps)
-  startTime Float?
-  endTime   Float?
-
-  // Failure tracking for video-render queue
+  startTime      Float?
+  endTime        Float?
   renderingError String?
 
-  scheduledAt DateTime?
-  publishedAt DateTime?
-  tags        String[]  @default([])
-  regenCount  Int       @default(0)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  tags       String[] @default([])
+  regenCount Int      @default(0)
 
-  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  scheduledPost ScheduledPost?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project  Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  postings AssetPosting[]
 
   @@index([projectId])
-  @@index([platform])
   @@index([status])
 }
 
-model ScheduledPost {
-  id       String   @id @default(uuid())
-  title    String
+model AssetPosting {
+  id       String   @id @default(cuid())
+  assetId  String
   platform Platform
-  date     String // Formatted YYYY-MM-DD
-  time     String // Formatted HH:mm (24h)
 
-  // Direct DateTime timestamp for easier DB indexing & cron queries
-  scheduledAt DateTime @map("scheduled_at")
+  status          PostingStatus @default(draft)
+  captionOverride String? // null = inherit Asset.draftText
+  scheduledAt     DateTime?
+  publishedAt     DateTime?
 
-  // Foreign key relation back to GeneratedAsset
-  assetId String @unique @map("asset_id")
-  asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
 
-  @@index([scheduledAt])
-  @@map("scheduled_posts")
+  @@unique([assetId, platform])
+  @@index([assetId])
+  @@index([platform])
+  @@index([status])
 }
