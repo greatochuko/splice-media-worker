@@ -58,4 +58,4 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 
 # Start worker
-CMD ["node", "dist/worker.js"]
+CMD ["pnpm", "tsx", "dist/worker.js"]

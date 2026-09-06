@@ -1,7 +1,5 @@
-onlyBuiltDependencies:
-  - '@prisma/engines'
-  - bcrypt
-  - esbuild
-  - msgpackr-extract
-  - prisma
-  - workerd
+allowBuilds:
+  '@prisma/engines': true
+  esbuild: true
+  msgpackr-extract: true
+  prisma: true
