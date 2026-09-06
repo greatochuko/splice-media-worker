@@ -1,0 +1,461 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  EDITOR
+  VIEWER
+}
+
+enum InvoiceStatus {
+  PAID
+  PENDING
+  FAILED
+}
+
+enum PlanTier {
+  STARTER
+  CREATOR
+  STUDIO
+}
+
+enum BillingInterval {
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  INCOMPLETE
+  INCOMPLETE_EXPIRED
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  UNPAID
+}
+
+enum Platform {
+  tiktok
+  youtube
+  instagram
+  facebook
+  linkedin
+  x
+  newsletter
+  threads
+  podcasts
+}
+
+enum WorkflowType {
+  CROSS_POST
+  CREATE_PROJECT
+}
+
+enum ExecutionStatus {
+  success
+  failed
+  pending
+}
+
+enum AssetStatus {
+  draft
+  scheduled
+  published
+}
+
+enum AssetType {
+  clip
+  thread
+  carousel
+  audiogram
+}
+
+enum ProjectStatus {
+  PENDING // Uploading or downloading media
+  PROCESSING // Processing clips / running AI jobs
+  READY // Complete and assets created
+  FAILED // Error downloading or processing
+}
+
+model Session {
+  sid    String   @id @map("sid")
+  sess   Json     @map("sess")
+  expire DateTime @map("expire")
+
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device     String?
+  browser    String?
+  location   String?
+  ip         String?
+  lastActive DateTime @default(now()) @updatedAt
+
+  @@index([expire], map: "IDX_session_expire")
+  @@index([userId])
+  @@map("session")
+}
+
+model User {
+  id           String @id @default(cuid())
+  email        String @unique
+  passwordHash String
+
+  firstName String
+  lastName  String
+  avatarUrl String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  deletedAt DateTime?
+
+  passwordResetTokens PasswordResetToken[]
+  workspaceMembers    WorkspaceMember[]
+
+  sessions                Session[]
+  notificationPreferences NotificationPreference[]
+}
+
+model PasswordResetToken {
+  id        String @id @default(cuid())
+  tokenHash String @unique
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model OtpToken {
+  id        String    @id @default(cuid())
+  email     String
+  codeHash  String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([email])
+  @@index([expiresAt])
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members           WorkspaceMember[]
+  invites           WorkspaceInvite[]
+  shareLinks        WorkspaceShareLink[]
+  connectedAccounts ConnectedAccount[]
+
+  brandKit     BrandKit?
+  subscription Subscription?
+  invoices     Invoice[]
+  workflows    Workflow[]
+  projects     Project[]
+
+  deletedAt DateTime?
+
+  paymentMethod PaymentMethod?
+}
+
+model WorkspaceMember {
+  id          String   @id @default(cuid())
+  workspaceId String
+  userId      String
+  role        Role     @default(EDITOR)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace        Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignedAccounts ConnectedAccount[] @relation("AssignedMemberAccounts")
+
+  @@unique([workspaceId, userId])
+  @@index([workspaceId])
+  @@index([userId])
+}
+
+model WorkspaceInvite {
+  id          String    @id @default(cuid())
+  workspaceId String
+  email       String
+  role        Role      @default(EDITOR)
+  token       String    @unique
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([email])
+  @@index([expiresAt])
+}
+
+model WorkspaceShareLink {
+  id          String   @id @default(cuid())
+  workspaceId String
+  token       String   @unique
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([expiresAt])
+}
+
+model ConnectedAccount {
+  id                String   @id @default(cuid())
+  workspaceId       String
+  platform          Platform
+  accountName       String
+  platformAccountId String
+  handle            String
+  avatarUrl         String   @default("")
+
+  accessToken           String
+  accessTokenExpiresAt  DateTime
+  refreshToken          String
+  refreshTokenExpiresAt DateTime?
+  scope                 String
+
+  permissions      String[] @default(["publish", "analytics"])
+  assignedMemberId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  workspace      Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  assignedMember WorkspaceMember? @relation("AssignedMemberAccounts", fields: [assignedMemberId], references: [id], onDelete: SetNull)
+
+  @@unique([workspaceId, platform, handle])
+  @@index([workspaceId])
+  @@index([platform])
+}
+
+model BrandKit {
+  id                String   @id @default(cuid())
+  workspaceId       String   @unique
+  logoUrl           String?
+  brandColor        String   @default("#FF5A34")
+  font              String   @default("space-grotesk")
+  watermarkPosition String   @default("Bottom right")
+  introUrl          String?
+  outroUrl          String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model NotificationPreference {
+  id           String   @id @default(cuid())
+  userId       String
+  preferenceId String // e.g., "processing", "published", "failed", "weekly", "team"
+  email        Boolean  @default(true)
+  push         Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, preferenceId])
+  @@index([userId])
+}
+
+model Subscription {
+  id                   String  @id @default(cuid())
+  workspaceId          String  @unique
+  stripeCustomerId     String? @unique
+  stripeSubscriptionId String? @unique
+
+  tier     PlanTier
+  interval BillingInterval    @default(MONTHLY)
+  status   SubscriptionStatus @default(ACTIVE)
+
+  unitAmount Int
+  currency   String @default("usd")
+
+  hoursUsed  Float @default(0.0)
+  hoursLimit Float
+
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  renewalDate        DateTime?
+  cancelAtPeriodEnd  Boolean   @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model Invoice {
+  id          String        @id @default(cuid())
+  workspaceId String
+  amount      String
+  status      InvoiceStatus @default(PAID)
+  pdfUrl      String?
+  issuedAt    DateTime      @default(now())
+  createdAt   DateTime      @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
+
+model PaymentMethod {
+  id          String   @id @default(cuid())
+  workspaceId String   @unique
+  brand       String // "visa", "mastercard", etc.
+  last4       String
+  expMonth    Int
+  expYear     Int
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+model Workflow {
+  id              String       @id @default(cuid())
+  workspaceId     String
+  name            String
+  type            WorkflowType @default(CROSS_POST)
+  triggerPlatform Platform
+  triggerEvent    String       @default("New Video Published")
+
+  // Target Platforms (Array for CREATE_PROJECT, or single fallback)
+  targetPlatforms Platform[] @default([])
+  actionPlatform  Platform
+  actionEvent     String
+
+  // AI & Processing Settings
+  clipLength           String? @default("30-60") // e.g. "under-30", "30-60", "60-90"
+  autoGenerateCaptions Boolean @default(true)
+  autoHashtags         Boolean @default(true)
+  removeWatermark      Boolean @default(true)
+  autoPublish          Boolean @default(false)
+
+  isActive        Boolean   @default(true)
+  totalExecutions Int       @default(0)
+  lastRun         DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  logs      WorkflowLog[]
+
+  @@index([workspaceId])
+  @@index([isActive])
+}
+
+model WorkflowLog {
+  id             String          @id @default(cuid())
+  workflowId     String
+  sourceTitle    String
+  thumbnailUrl   String?
+  videoDuration  String?
+  status         ExecutionStatus @default(pending)
+  sourcePlatform Platform
+  targetPlatform Platform
+  targetUrl      String?
+  errorMessage   String?
+  createdAt      DateTime        @default(now())
+
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@index([workflowId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Project {
+  id           String        @id @default(cuid())
+  workspaceId  String
+  name         String
+  description  String?
+  status       ProjectStatus @default(PENDING) // Default to PENDING
+  platforms    Platform[]
+  sourceUrl    String?
+  sourceFile   String?
+  errorMessage String? // Useful for client feedback if a job fails
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  assets    Asset[]
+
+  @@index([workspaceId])
+  @@index([createdAt])
+}
+
+model Asset {
+  id        String      @id @default(cuid())
+  projectId String
+  title     String
+  type      AssetType   @default(clip)
+  platform  Platform
+  status    AssetStatus @default(draft)
+  draftText String      @default("")
+
+  // Media payload for publishing
+  mediaUrl     String // Cloudinary or S3 URL of the cut clip/image
+  thumbnailUrl String // Cover photo or video frame
+  mediaType    String // e.g. "video/mp4", "image/png"
+
+  // Clip cut timestamps (for video rendering steps)
+  startTime Float?
+  endTime   Float?
+
+  scheduledAt DateTime?
+  publishedAt DateTime?
+  tags        String[]  @default([])
+  regenCount  Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  project       Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scheduledPost ScheduledPost?
+
+  @@index([projectId])
+  @@index([platform])
+  @@index([status])
+}
+
+model ScheduledPost {
+  id       String   @id @default(uuid())
+  title    String
+  platform Platform
+  date     String // Formatted YYYY-MM-DD
+  time     String // Formatted HH:mm (24h)
+
+  // Direct DateTime timestamp for easier DB indexing & cron queries
+  scheduledAt DateTime @map("scheduled_at")
+
+  // Foreign key relation back to GeneratedAsset
+  assetId String @unique @map("asset_id")
+  asset   Asset  @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([scheduledAt])
+  @@map("scheduled_posts")
+}
